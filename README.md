@@ -4,20 +4,57 @@
 
 ## 启用前需要补齐什么
 
-1. **部署 Workflow 并创建标签**：将整个 `.github/` 放进目标仓库的默认分支，启用 GitHub Actions。先按 `.github/label.yaml` 创建仓库标签，可在仓库根目录运行下方同步命令。
+1. **部署 Workflow 并创建标签**：将整个 `.github/` 放进目标仓库的默认分支，启用 GitHub Actions。先按下面的“手动创建与更新仓库标签”步骤，将 `.github/label.yaml` 同步到 GitHub。
 2. **配置 Jev 密钥**：在仓库 **Settings → Secrets and variables → Actions** 添加 `TYPESAFE_API_KEY`。默认模型为 `jev-latest`，配置见 [action-policy.yaml](.github/action-policy.yaml)。
 3. **接入执行 Agent**：提供任务监听、阶段执行、结果反馈和失败处理能力，具体要求见下一节。在 `action-policy.yaml` 的 `agents` 中填写实际模型及能力；这里仅提供评审上下文，填写配置不会自动启动 Agent。
 
+## 手动创建与更新仓库标签
 
-标签同步需要本地安装 Python、PyYAML 和 GitHub CLI，并使用有仓库标签写权限的账号登录：
+`.github/label.yaml` 是配置文件，上传后不会自动创建标签。目前没有标签同步 Workflow，需要在本地运行 Python 脚本，由它调用 GitHub CLI 创建或更新仓库标签。这个过程不需要 Jev API Key。
+
+**1. 准备环境并进入仓库根目录。** 先安装 Python（建议 3.12）、Git 和 GitHub CLI（`gh`）。尚未下载项目时执行：
 
 ```bash
-python3 -m pip install PyYAML==6.0.2
-gh auth login
-python3 .github/scripts/sync_labels.py --repo OWNER/REPO
+git clone https://github.com/S-zhi/Juejin.git
+cd Juejin
 ```
 
-同步只创建或更新配置中声明的标签，保留其他手工标签。
+如果已经有本地项目，直接进入包含 `.github/` 和 `README.md` 的目录，不必再次克隆。以下命令都在该目录执行：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install PyYAML==6.0.2
+```
+
+以上激活命令适用于 macOS/Linux；Windows PowerShell 使用 `.venv\Scripts\Activate.ps1`。`.venv/` 是本地 Python 环境，不需要提交。
+
+**2. 登录 GitHub。** 使用对目标仓库有标签写权限的账号；如果用细粒度 PAT，需要授予目标仓库 `Issues: write` 权限。
+
+```bash
+gh auth login --hostname github.com
+gh auth status
+```
+
+**3. 先预览，再实际同步。** 以下以本仓库 `S-zhi/Juejin` 为目标；用于其他仓库时替换 `--repo` 后面的值。
+
+```bash
+# 只校验配置并打印计划执行的命令，不修改 GitHub
+python .github/scripts/sync_labels.py --file .github/label.yaml --repo S-zhi/Juejin --dry-run
+
+# 实际创建或更新 GitHub 仓库标签
+python .github/scripts/sync_labels.py --file .github/label.yaml --repo S-zhi/Juejin
+```
+
+执行成功后，每个标签会输出 `已同步标签: ...`。脚本仅处理配置中声明的 `state:` 和 `action:` 标签：不存在则创建，同名则更新颜色和描述，保留其他手工标签，不改动已有 Issue 的标签分配。
+
+**4. 检查结果。** 打开 [仓库 Labels 页面](https://github.com/S-zhi/Juejin/labels)，或运行：
+
+```bash
+gh label list --repo S-zhi/Juejin --limit 100
+```
+
+当前配置应包含六个 `state:` 标签和两个 `action:` 标签。以后修改 `.github/label.yaml`，重新运行实际同步命令即可；重复执行不会重复创建同名标签。若中途失败，修复权限或网络问题后可重新运行；从配置中移除一个标签不会自动删除 GitHub 上的旧标签。
 
 ## 执行 Agent 必须具备什么能力
 
