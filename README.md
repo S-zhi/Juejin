@@ -10,7 +10,19 @@
 
 ## 手动创建与更新仓库标签
 
-`.github/label.yaml` 是配置文件，上传后不会自动创建标签。目前没有标签同步 Workflow，需要在本地运行 Python 脚本，由它调用 GitHub CLI 创建或更新仓库标签。这个过程不需要 Jev API Key。
+**直接在 GitHub Actions 页面运行，无需本地安装依赖。** `.github/label.yaml` 是配置，`sync-labels.yml` 负责读取它并创建或更新仓库标签。只上传 YAML 不会自动同步，需要手动运行一次：
+
+1. 确保 `.github/label.yaml`、`.github/scripts/sync_labels.py` 和 `.github/workflows/sync-labels.yml` 已提交到默认分支，并启用 GitHub Actions。
+2. 打开仓库 **Actions → Sync labels → Run workflow**，选择 `main` 分支，再点击 **Run workflow**。
+3. 等待运行成功，日志中会出现各标签的 `已同步标签: ...`。
+4. 打开 [仓库 Labels 页面](https://github.com/S-zhi/Juejin/labels)，确认六个 `state:` 标签和两个 `action:` 标签已创建。
+
+Workflow 自动准备 Python 和 PyYAML，使用运行环境预装的 GitHub CLI，以及自动提供的 `GITHUB_TOKEN`（已声明 `issues: write`）。不需要 Jev API Key，也无需额外配置个人 Token；手动运行者需要仓库写权限。
+
+以后修改 `.github/label.yaml` 后，再手动运行 **Sync labels** 即可。同名标签更新颜色和描述，不重复创建；未声明的手工标签保留，也不会修改已有 Issue 的标签分配。从配置中移除标签不会删除 GitHub 上的旧标签。失败后可修复问题并重新运行。
+
+<details>
+<summary>可选：在本地运行同步脚本</summary>
 
 **1. 准备环境并进入仓库根目录。** 先安装 Python（建议 3.12）、Git 和 GitHub CLI（`gh`）。尚未下载项目时执行：
 
@@ -46,15 +58,7 @@ python .github/scripts/sync_labels.py --file .github/label.yaml --repo S-zhi/Jue
 python .github/scripts/sync_labels.py --file .github/label.yaml --repo S-zhi/Juejin
 ```
 
-执行成功后，每个标签会输出 `已同步标签: ...`。脚本仅处理配置中声明的 `state:` 和 `action:` 标签：不存在则创建，同名则更新颜色和描述，保留其他手工标签，不改动已有 Issue 的标签分配。
-
-**4. 检查结果。** 打开 [仓库 Labels 页面](https://github.com/S-zhi/Juejin/labels)，或运行：
-
-```bash
-gh label list --repo S-zhi/Juejin --limit 100
-```
-
-当前配置应包含六个 `state:` 标签和两个 `action:` 标签。以后修改 `.github/label.yaml`，重新运行实际同步命令即可；重复执行不会重复创建同名标签。若中途失败，修复权限或网络问题后可重新运行；从配置中移除一个标签不会自动删除 GitHub 上的旧标签。
+</details>
 
 ## 执行 Agent 必须具备什么能力
 
