@@ -1,0 +1,57 @@
+# Issue 状态与 Agent 调度
+
+本项目已实现 **Issue 状态流转、TypeSafe Jev 评审和 action 标签分配**。要让整个流程运转，还需要配置 API Key，并接入一个真正执行任务的 Agent。Jev 只判断是否需要更强模型，不负责开发、测试或创建 PR。
+
+## 启用前需要补齐什么
+
+1. **部署 Workflow 并创建标签**：将整个 `.github/` 放进目标仓库的默认分支，启用 GitHub Actions。先按 `.github/label.yaml` 创建仓库标签，可在仓库根目录运行下方同步命令。
+2. **配置 Jev 密钥**：在仓库 **Settings → Secrets and variables → Actions** 添加 `TYPESAFE_API_KEY`。默认模型为 `jev-latest`，配置见 [action-policy.yaml](.github/action-policy.yaml)。
+3. **接入执行 Agent**：提供任务监听、阶段执行、结果反馈和失败处理能力，具体要求见下一节。在 `action-policy.yaml` 的 `agents` 中填写实际模型及能力；这里仅提供评审上下文，填写配置不会自动启动 Agent。
+
+
+标签同步需要本地安装 Python、PyYAML 和 GitHub CLI，并使用有仓库标签写权限的账号登录：
+
+```bash
+python3 -m pip install PyYAML==6.0.2
+gh auth login
+python3 .github/scripts/sync_labels.py --repo OWNER/REPO
+```
+
+同步只创建或更新配置中声明的标签，保留其他手工标签。
+
+## 执行 Agent 必须具备什么能力
+
+- **发现并领取任务**：通过轮询或外部 Webhook 发现带有 `action:agent` 的未关闭 Issue，读取描述、评论和当前 `state:`；避免重复领取，并在反馈前确认任务仍属于当前阶段。不要仅依赖另一个监听 `labeled` 的 GitHub Actions 来启动执行器，内置 `GITHUB_TOKEN` 添加的标签不会触发它。
+- **执行阶段任务**：需求评审、方案设计、编码与测试、代码审查，以及跟进关联 PR 的实际合并。执行器自行配置模型凭据、运行环境和必要的仓库权限；Jev Key 不能代替执行模型的凭据。
+- **成功反馈**：先在 Issue 中记录结果、验证证据和相关 PR，再移除 `action:agent`，保留当前 state，由状态控制推进下一阶段。
+- **失败反馈**：先添加 `state:agent-failed`，再删除原 state，最后移除 `action:agent`。失败或取消后暂停，不自动重试或继续推进。
+
+执行器修改标签时应使用具备 Issue 写权限的 **GitHub App Token 或 PAT**，才能触发现有的后续状态流转。若执行器使用内置 `GITHUB_TOKEN`，必须另外显式调用后续流程，不能只移除标签后等待新 Workflow。
+
+完整接口、幂等要求和操作顺序见 [Agent 接入协议](.github/protocols/agent-action-protocol.md)。本项目尚未提供远端执行器、任务领取服务或执行结果回调服务。
+
+## 接入后如何运转
+
+```text
+新建 Issue → state:needs-triage → Jev 评审
+  ├─ 常规模型足够 → action:agent → 执行 Agent 处理
+  └─ 需要更强模型 → action:human → 升级处理方处理
+完成并移除最后一个 action → 下一阶段 → 再次评审
+失败 → state:agent-failed → 暂停
+```
+
+正常阶段顺序：
+
+```text
+needs-triage → assess-plan → coding → code-review → wait-auto-merge
+```
+
+升级处理方完成后同样记录结果并移除自己的 `action:human`。末阶段只有在关联 PR **实际合并**后才算完成；释放 action 后不再推进，也不自动关闭 Issue。
+
+`state-control.yaml` 处理新建 Issue 和 action 标签移除，并在状态确实变化后直接调用评审。`action-control.yaml` 只监听 `labeled`，只对新增 `state:` 标签执行评审。
+
+## 评审依据与首次验证
+
+发送给 Jev 的内容包括 Issue 标题、完整描述、全部可读取的 Issue 评论、当前阶段和 Agent 能力配置。通用及各阶段的提示词放在 [state-review.yaml](.github/prompts/state-review.yaml)，判断的是是否需要更强模型；信息暂缺、等待 CI 或未配置能力本身不作为升级理由。评论读取失败、模型调用失败或评审期间上下文变化时，不添加 action 标签。
+
+完成配置后，创建一个测试 Issue，确认初始 state 和 action 都已添加；再确认执行器能记录结果、移除 action，并触发下一阶段。最后验证一次失败任务能够进入 `state:agent-failed` 并停止。现有测试使用模拟接口，不能代替接入真实 Jev 和执行 Agent 后的验证。
